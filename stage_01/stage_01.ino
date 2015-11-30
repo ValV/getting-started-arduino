@@ -2,6 +2,7 @@
  *  Simple example that makes the Led blink
  */
 
+// This is not OOP - so global variables are ok
 int led = 10; // Led's pin
 
 /** Setup routine
@@ -19,10 +20,8 @@ void setup() {
 void loop() {
   // Turn the Led on (HIGH is the voltage level)
   digitalWrite(led, HIGH);
-  // Wait for 850 ms
-  delay(850);
+  delay(850); // Wait for 850 ms
   // Turn the Led off by making the voltage LOW
   digitalWrite(led, LOW);
-  // wait for 550 ms
-  delay(550);
+  delay(550); // wait for 550 ms
 }

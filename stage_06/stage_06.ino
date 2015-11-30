@@ -4,7 +4,7 @@
  *  of the predefined modes
  */
 
-#define DEBUG 0
+#define DEBUG 1
 
 #ifndef _BV
 #define _BV(bit) (1 << (bit))
@@ -44,7 +44,7 @@ typedef struct {
   uint16_t ddr;
 } pin_t;
 
-// Leds' (pwm) array: 5 = PD5, 6 = PD6, 9 = PB1, 10 = PB2
+// Leds' (PWM) array: 5 = PD5, 6 = PD6, 9 = PB1, 10 = PB2
 const pin_t led[LEDS] = {
   {PD5, (uint16_t) &PORTD,
     (uint16_t) &PIND, (uint16_t) &DDRD},
@@ -105,18 +105,25 @@ const uint8_t mode[MODC][SEQN][LEDS] = {
   }
 };
 
-// PushButton's pin (pwm): 3 = PD3
+// PushButton's pin (PWM): 3 = PD3
 const pin_t button = { PD3,
   (uint16_t) &PORTD, (uint16_t) &PIND, (uint16_t) &DDRD
 };
 
+// Serial message strings
+const char *STR_SUB = "Entering setup...";
+const char *STR_SUE = "Setup finished.";
 const char *STR_SSP = "Lights suspended...";
 const char *STR_RSM = "Lights' run resumed.";
 const char *STR_M_1 = "Mode 1. Waves.";
 const char *STR_M_2 = "Mode 2. Collisions.";
 const char *STR_M_3 = "Mode 3. Drops.";
 const char *STR_M_4 = "Mode 4. Ouroboros.";
+#if (DEBUG == 1)
+const char *STR_DBG = "Input: ";
+#endif
 
+// Serial commands
 const char command[CMDC][CMDX] = {
   {'o', 'n', 0, 0},     // Lights on
   {'o', 'f', 'f', 0},   // Lights off
@@ -127,11 +134,13 @@ const char command[CMDC][CMDX] = {
   {'m', '4', 0, 0}      // Mode 4 (m4)
 };
 
-char str_in[CMDX] = {0, 0, 0, 0}; // Input string
+// This is not OOP - so global variables are ok
 volatile uint8_t lrun = 0; // Lights' run-stop variable
-volatile uint8_t bmod = 0; // Mode has been changed
+volatile uint8_t bmod = 0; // Mode change trigger variable
 // Indices for the mode, the sequence, and the rest
 volatile uint8_t mod = 0, seq = 0, i = 0;
+
+char str_in[CMDX] = {0, 0, 0, 0}; // Serial input string
 
 /** ISR (Interrupt Service Routine) setup macro
  *  Used to set handler for interrupts from
@@ -160,12 +169,12 @@ ISR(TIMER2_OVF_vect) {
  */
 ISR(INT1_vect) {
   if (rbi(_MMIO_BYTE(button.pin), button.bit)) {
-    // Button released: Allow lights to run again
+    // Button released: allow lights to run again
     lrun = 1;
     mod = (mod + 1) & (MODC - 1); // Shift to the next mode
     bmod = 1; // Trigger the mode change
   } else {
-    // Button pressed: Forbid running lights
+    // Button pressed: suspend running lights
     lrun = 0;
   }
 }
@@ -176,7 +185,7 @@ ISR(INT1_vect) {
 void setup() {
   // Set up Serial console
   Serial.begin(9600);
-  Serial.println("Entering setup...");
+  Serial.println(STR_SUB);
 
   cli(); // Turn off global interrupts
 
@@ -199,12 +208,15 @@ void setup() {
   // Enable Fast PWM for Timer0 & Timer1 (with 0xFF limit)
   sbi(TCCR0A, WGM00); sbi(TCCR0A, WGM01); // Fast PWM
   sbi(TCCR1A, WGM10); sbi(TCCR1B, WGM12); // Fast PWM 8-bit
-  /*/ Enable timers (at (16000000 / 1) / 256 = 62500 Hz)
-  sbi(TCCR0B, CS00); // Timer0 enabled (with /1 prescaler)
-  sbi(TCCR1B, CS10); // Timer1 enabled (with /1 prescaler)*/
+#if (DEBUG == 1)
   // Enable timers (at (16000000 / 8) / 256 = 7812.5 Hz)
-  sbi(TCCR0B, CS01); sbi(TCCR0B, CS00); // with /8 prescaler
-  sbi(TCCR1B, CS11); sbi(TCCR1B, CS10); // with /8 prescaler
+  sbi(TCCR0B, CS01); // with /8 prescaler
+  sbi(TCCR1B, CS11); // with /8 prescaler
+#else
+  // Enable timers (at (16000000 / 1) / 256 = 62500 Hz)
+  sbi(TCCR0B, CS00); // Timer0 enabled (with /1 prescaler)
+  sbi(TCCR1B, CS10); // Timer1 enabled (with /1 prescaler)
+#endif
   // Set Compare match Output Mode for Timer0 & Timer1
   sbi(TCCR0A, COM0A1); // Timer0 attached to OC0A output
   sbi(TCCR0A, COM0B1); // Timer0 attached to OC0B output
@@ -219,7 +231,7 @@ void setup() {
   // Enable Phase-Correct PWM (with OCR2A limit)
   sbi(TCCR2B, WGM22); sbi(TCCR2A, WGM20);
   // Enable Timer2 (at (16000000 / 1024) / 312 = 50 Hz)
-  // /1024 prescaler
+  // Bits CSn0, CSn1, CSn2 for /1024 async prescaler
   sbi(TCCR2B, CS20); sbi(TCCR2B, CS21); sbi(TCCR2B, CS22);
   // Set Compare Register value for PWM on Timer2
   OCR2A = 155; // (155 + 1) * 2 = 312
@@ -230,7 +242,7 @@ void setup() {
 
   sei(); // Turn global interrupts on again
   
-  Serial.println("Setup finished.");
+  Serial.println(STR_SUE);
 }
 
 /** Loop routine
@@ -244,8 +256,7 @@ void loop() {
       case 0: Serial.println(STR_M_1); break;
       case 1: Serial.println(STR_M_2); break;
       case 2: Serial.println(STR_M_3); break;
-      case 3: Serial.println(STR_M_4); break;
-      default: asm("nop"); break;
+      case 3: Serial.println(STR_M_4);
     }
     bmod = 0; // Release the mode change flag
   }
@@ -266,7 +277,7 @@ void loop() {
     if (i) {
       // Display contents of input string
 #if (DEBUG == 1)
-      Serial.print("Input: ");
+      Serial.print(STR_DBG);
       Serial.println(str_in); // This is not safe
 #endif
       // Find command in the input

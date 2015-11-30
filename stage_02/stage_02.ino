@@ -3,6 +3,7 @@
  * (led shifting and fading)
  */
 
+// This is not OOP - so global variables are ok
 int led[4] = {5, 6, 9, 10}; // Leds' pin array
 int idx = 0; // Indices
 

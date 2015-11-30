@@ -8,6 +8,8 @@
 
 const int tfreq = 50; // Hz - once per 20ms (1 / 0.020)
 const int led[MAXID] = {5, 6, 9, 10}; // Leds' pin array
+
+// This is not OOP - so global variables are ok
 volatile int idx = 0; // Indices
 volatile int x = 0, y = 0; // Arithmetic variables
 
@@ -18,8 +20,8 @@ volatile int x = 0, y = 0; // Arithmetic variables
  *  disable global interrupts)
  */
 ISR(TIMER1_OVF_vect) {
-  // All delay() fuctions (an alike) must not be used here
-  TCNT1 = 65536 - 16000000 / 256 / tfreq; // Reset Counter
+  // Reset the Counter Register initial value
+  TCNT1 = 65536 - 16000000 / 256 / tfreq;
   idx &= (MAXID - 1); // Trim led index to be always in range
   for (int i = 0; i < MAXID; i ++) {
     // Set each led

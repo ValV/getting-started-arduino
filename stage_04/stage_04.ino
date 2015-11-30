@@ -6,22 +6,27 @@
  *  management)
  */
 
-#define MAXID 4 // Maximum led index (should be power of 2)
+#define IDXN 4 // Maximum sequence index (should be n^2)
+#define LEDS 4 // Maximum led count (have 4 of them)
 
 const int tfreq = 50; // Hz - timer frequency: once per 20ms
-const int led[MAXID] = {5, 6, 9, 10}; // Leds' pin array
+const int led[LEDS] = {5, 6, 9, 10}; // Leds' pin array
 const int button = 3; // PushButton's pin
 
-volatile int idx = 0, i = 0, n = 0, c = 0; // Indices
-volatile int x = 0, y = 0; // Arithmetic variables
-
-const char z = ((sizeof x) * 8 - 1); // V for fast arithmetic
-
-volatile char lrun = 0; // Lights' run-stop variable
-
-char str_in[4] = {'\0', '\0', '\0', '\0'}; // Input string
+// Serial message strings
 const char *STR_SSP = "Lights suspended...";
 const char *STR_RSM = "Lights' run resumed.";
+
+// This is not OOP - so global variables are ok
+volatile char lrun = 0; // Lights' run-stop variable
+// Indices
+volatile int idx = 0, i = 0, n = 0, c = 0;
+volatile int x = 0, y = 0; // Arithmetic variables
+
+const char z = ((sizeof x) * 8 - 1); // For fast arithmetic
+
+// Serial input string
+char str_in[4] = {'\0', '\0', '\0', '\0'};
 
 /** ISR (Interrupt Service Routine) setup macro
  *  Used to set handler for interrupts from
@@ -30,22 +35,22 @@ const char *STR_RSM = "Lights' run resumed.";
  *  disable global interrupts)
  */
 ISR(TIMER1_OVF_vect) {
-  // Reset the Counter start value
+  // Reset the Counter Register initial value
   TCNT1 = 65536 - 16000000 / 256 / tfreq;
 
   // Check for lights' run enabled
   if (!lrun) return;
 
   // Trim led index to be always in range
-  idx &= (MAXID - 1);
+  idx &= (IDXN - 1);
   // Set each led
-  for (i = 0; i < MAXID; i ++) {
+  for (i = 0; i < LEDS; i ++) {
     // Calculate duty cycle for each led (use PWM)
     x = idx - i;
     y = (x + (x >> z)) ^ (x >> z); // y = abs(x)
-    x = (int) ((MAXID / 2) - y);
+    x = (int) ((LEDS / 2) - y);
     y = (x + (x >> z)) ^ (x >> z); // y = abs(x)
-    x = (unsigned char) ((255.0 / (MAXID / 2)) * y);
+    x = (unsigned char) ((255.0 / (LEDS / 2)) * y);
     analogWrite(led[i], x); // Set duty cycle for the led
   }
   idx ++; // Increment the index variable
@@ -57,11 +62,11 @@ ISR(TIMER1_OVF_vect) {
  */
 void btnSwChange() {
   if (digitalRead(button) == HIGH) {
-    // Allow lights to run again
+    // Button released: allow lights to run again
     lrun = 1;
     Serial.println(STR_RSM);
   } else {
-    // Forbid running lights
+    // Button pressed: suspend running lights
     lrun = 0;
     Serial.println(STR_SSP);
   }
@@ -72,7 +77,7 @@ void btnSwChange() {
  */
 void setup() {
   // Initialize the pins
-  for (int i = 0; i < MAXID; i ++)
+  for (int i = 0; i < LEDS; i ++)
     // Set Led's pin as OUTPUT
     pinMode(led[i], OUTPUT);
   // Set PushButton's pin as INPUT

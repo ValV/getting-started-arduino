@@ -3,12 +3,13 @@
  *  analogWrite() etc. fuctions with low-level
  *  read-writes to the ports
  *  Timer2 is used instead of Timer1- so minimal
- *  frequency is ~30.5Hz (Phase Correct PWM)
+ *  frequency is ~30.5Hz (Phase-Correct PWM)
  */
 
 #ifndef _BV
 #define _BV(bit) (1 << (bit))
-#endif 
+#endif
+
 // Arduino standard (AVR) methods for setting (sbi) or
 // clearing (cbi) bits in PORT (and other) variables
 // Use _MMIO_BYTE(addr) with pointers
@@ -18,13 +19,14 @@
 #ifndef sbi
 #define sbi(sfr, bit) (_SFR_BYTE(sfr) |= _BV(bit))
 #endif
+
 // Read bit from PORT (and other) variables
 #define rbi(sfr, bit) (_SFR_BYTE(sfr) & _BV(bit))
 
-#define MAXID 4 // Maximum led index (should be power of 2)
+#define SEQN 4 // Maximum sequence index (should be n^2)
+#define LEDS 4 // Maximum led count (have 4 of them)
 
 // Custom types to handle PORT (and other) variables
-//typedef unsigned int ptr_t;
 typedef struct {
   uint8_t bit;
   uint16_t port;
@@ -32,33 +34,42 @@ typedef struct {
   uint16_t ddr;
 } pin_t;
 
-const int tfreq = 50; // Hz - timer frequency: once per 20ms
-// Leds' digital pin array:
-// 5(pwm)=PD5, 6(pwm)=PD6, 9(pwm)=PB1, 10(pwm)=PB2
-const pin_t led[MAXID] = {
-  {PD5, (uint16_t) &PORTD, (uint16_t) &PIND, (uint16_t) &DDRD},
-  {PD6, (uint16_t) &PORTD, (uint16_t) &PIND, (uint16_t) &DDRD},
-  {PB1, (uint16_t) &PORTB, (uint16_t) &PINB, (uint16_t) &DDRB},
-  {PB2, (uint16_t) &PORTB, (uint16_t) &PINB, (uint16_t) &DDRB}};
-// Leds' sequence array (5=OC0B, 6=OC0A, 9=OC1A, 10=OC1B)
-const uint16_t seq[MAXID] = {
+// Leds' (PWM) array: 5 = PD5, 6 = PD6, 9 = PB1, 10 = PB2
+const pin_t led[LEDS] = {
+  {PD5, (uint16_t) &PORTD,
+    (uint16_t) &PIND, (uint16_t) &DDRD},
+  {PD6, (uint16_t) &PORTD,
+    (uint16_t) &PIND, (uint16_t) &DDRD},
+  {PB1, (uint16_t) &PORTB,
+    (uint16_t) &PINB, (uint16_t) &DDRB},
+  {PB2, (uint16_t) &PORTB,
+    (uint16_t) &PINB, (uint16_t) &DDRB}
+};
+
+// Leds' out order (5 = OC0B, 6 = OC0A, 9 = OC1A, 10 = OC1B)
+const uint16_t lord[LEDS] = {
   (uint16_t) &OCR0B, (uint16_t) &OCR0A,
   (uint16_t) &OCR1A, (uint16_t) &OCR1B};
-// PushButton's pin 3(pwm)=PD3
+
+// PushButton's pin (pwm): 3 = PD3
 const pin_t button = {
   PD3, (uint16_t) &PORTD,
   (uint16_t) &PIND, (uint16_t) &DDRD};
 
-volatile int idx = 0, i = 0, n = 0, c = 0; // Indices
-volatile int x = 0, y = 0, w = 0; // Arithmetic variables
-
-const char z = ((sizeof x) * 8 - 1); // V for fast arithmetic
-
-volatile char lrun = 0; // Lights' run-stop variable
-
-char str_in[4] = {'\0', '\0', '\0', '\0'}; // Input string
+// Serial message strings
 const char *STR_SSP = "Lights suspended...";
 const char *STR_RSM = "Lights' run resumed.";
+
+// This is not OOP - so global variables are ok
+volatile char lrun = 0; // Lights' run-stop variable
+// Indices
+volatile int seq = 0, i = 0, n = 0, c = 0;
+volatile int x = 0, y = 0; // Arithmetic variables
+
+const char z = ((sizeof x) * 8 - 1); // For fast arithmetic
+
+// Serial input string
+char str_in[4] = {'\0', '\0', '\0', '\0'};
 
 /** ISR (Interrupt Service Routine) setup macro
  *  Used to set handler for interrupts from
@@ -71,34 +82,33 @@ ISR(TIMER2_OVF_vect) {
   if (!lrun) return;
 
   // Trim led index to be always in range
-  idx &= (MAXID - 1);
+  seq &= (SEQN - 1);
   // Set each led
-  for (i = 0; i < MAXID; i ++) {
+  for (i = 0; i < LEDS; i ++) {
     // Calculate duty cycle for each led (use PWM)
-    x = idx - i;
+    x = seq - i;
     y = (x + (x >> z)) ^ (x >> z); // y = abs(x)
-    x = (int) ((MAXID / 2) - y);
+    x = (int) ((LEDS / 2) - y);
     y = (x + (x >> z)) ^ (x >> z); // y = abs(x)
-    x = (unsigned char) ((255.0 / (MAXID / 2)) * y);
-    //_MMIO_BYTE(seq[i]) = (uint8_t) x;
-    // TODO: Change to low-level IO
-    //analogWrite(seq[i], x); // Set duty cycle for the led
+    x = (unsigned char) ((255.0 / (LEDS / 2)) * y);
+    // Write calcualted duty cycle value to the port
+    _MMIO_BYTE(lord[i]) = (uint8_t) x;
   }
-  sbi(_MMIO_BYTE(led[idx].port), led[idx].bit);
-  idx ++; // Increment the index variable
+  seq ++; // Increment the index variable
 }
 
-/** Push button interrupt handler
- *  This one will handle all interrupts on
- *  every change of PushButton's pin state
+/** ISR (Interrupt Service Routine) setup macro
+ *  Used to set handler for interrupts from PushButton
+ *  on pin 3 (PD3 line). It will handle interrupts
+ *  on ANY CHANGE of PushButton's pin state
  */
-void btnSwChange() {
+ISR(INT1_vect) {
   if (rbi(_MMIO_BYTE(button.pin), button.bit)) {
-    // Allow lights to run again
+    // Button released: allow lights to run again
     lrun = 1;
     Serial.println(STR_RSM);
   } else {
-    // Forbid running lights
+    // Button pressed: suspend running lights
     lrun = 0;
     Serial.println(STR_SSP);
   }
@@ -108,59 +118,55 @@ void btnSwChange() {
  *  All configuration trcks go here
  */
 void setup() {
+  // Set up Serial console
+  Serial.begin(9600);
+  Serial.println("Entering setup...");
+
+  cli(); // Turn off global interrupts
+
   // Initialize the pins (set for OUTPUT and clear for INPUT)
-  for (int i = 0; i < MAXID; i ++) {
+  for (int i = 0; i < LEDS; i ++) {
     // Set Led's pin as OUTPUT
     sbi(_MMIO_BYTE(led[i].ddr), led[i].bit);
   }
   // Set PushButton's pin (PD3) as INPUT
   cbi(_MMIO_BYTE(button.ddr), button.bit);
 
-  // Set up Serial console
-  Serial.begin(9600);
-  //while(!Serial);
-  Serial.println("Entering setup...");
-
-  cli(); // Turn off global interrupts
-
   // Reset Timers (Timer Counter Control Registers)
-  TCCR0A = 0; TCCR0B = 0; // Timer0 disabled and detached
-  TCCR1A = 0; TCCR1B = 0; // Timer1 disabled and detached
-  TCCR2A = 0; TCCR2B = 0; // Timer2 disabled and detached
+  TCCR0A = TCCR0B = 0; // Timer0 disabled and detached
+  TCCR1A = TCCR1B = 0; // Timer1 disabled and detached
+  TCCR2A = TCCR2B = 0; // Timer2 disabled and detached
 
   // Disable interrupts for Timer0 & Timer1
   TIMSK0 = TIMSK1 = 0;
-  // Enable PWM for Timer0 & Timer1
+  // Enable Fast PWM for Timer0 & Timer1 (with 0xFF limit)
   sbi(TCCR0A, WGM00); sbi(TCCR0A, WGM01); // Fast PWM
   sbi(TCCR1A, WGM10); sbi(TCCR1B, WGM12); // Fast PWM 8-bit
-  // Set Compare Register value for PWM on Timer0 & Timer1
-  OCR0A = 0; OCR0B = 0; // 1/256 of duty cycle
-  OCR1A = 0; OCR1B = 0; // 1/256 of duty cycle
-  // Set Compare match Output Mode for Timer0 & Timer1
-  //sbi(TCCR0A, COM0A1); // Timer0 attached to OC0A output
-  //sbi(TCCR0A, COM0B1); // Timer0 attached to OC0B output
-  //sbi(TCCR1A, COM1A1); // Timer1 attached to OC1A output
-  //sbi(TCCR1A, COM1B1); // Timer1 attached to OC1B output
   // Enable timers (at (16000000 / 1) / 256 = 62500 Hz)
   sbi(TCCR0B, CS00); // Timer0 enabled (with /1 prescaler)
   sbi(TCCR1B, CS10); // Timer1 enabled (with /1 prescaler)
-  //sbi(TIMSK0, TOIE0); //sbi(TIMSK0, OCIE0B);
-  //sbi(TIMSK1, TOIE1); //sbi(TIMSK1, OCIE1B);
+  // Set Compare match Output Mode for Timer0 & Timer1
+  sbi(TCCR0A, COM0A1); // Timer0 attached to OC0A output
+  sbi(TCCR0A, COM0B1); // Timer0 attached to OC0B output
+  sbi(TCCR1A, COM1A1); // Timer1 attached to OC1A output
+  sbi(TCCR1A, COM1B1); // Timer1 attached to OC1B output
+  // Set Compare Register value for PWM on Timer0 & Timer1
+  OCR0A = OCR0B = 0; // Timer0 1/256 of duty cycle
+  OCR1A = OCR1B = 0; // Timer1 1/256 of duty cycle
 
+  // Enable interrupts for Timer2
+  sbi(TIMSK2, TOIE2); // Interrupts from overflow enabled
   // Enable Phase-Correct PWM (with OCR2A limit)
   sbi(TCCR2B, WGM22); sbi(TCCR2A, WGM20);
-  sbi(TCCR2A, COM2A0); // Timer2 attached to OC2A output
+  // Enable Timer2 (at (16000000 / 1024) / 312 = 50 Hz)
+  // Bits CSn0, CSn1, CSn2 for /1024 async prescaler
+  sbi(TCCR2B, CS20); sbi(TCCR2B, CS21); sbi(TCCR2B, CS22);
   // Set Compare Register value for PWM on Timer2
   OCR2A = 155; // (155 + 1) * 2 = 312
-  // Enable Timer2 (at (16000000 / 1024) / 312 = 50 Hz)
-  sbi(TCCR2B, CS20); sbi(TCCR2B, CS22); // /1024 prescaler
-  // Enable interrupts for Timer2
-  //sbi(TIMSK2, OCIE2A); // Interrupts from OC2A line enabled
-  sbi(TIMSK2, TOIE2); // Interrupts from overflow enabled
 
   // Enable INT1 for PD3 (PushButton)
-  x = digitalPinToInterrupt(3);
-  attachInterrupt(x, btnSwChange, CHANGE);
+  sbi(EICRA, ISC10); // Trigger INT1 on ANY CHANGE
+  sbi(EIMSK, INT1); // Turn on INT1
 
   sei(); // Turn global interrupts on again
   
