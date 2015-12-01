@@ -331,7 +331,6 @@ void loop() {
       // Clear the rest of Serial buffer and input string
       while (Serial.available()) {
         Serial.read();
-        //delayMicroseconds(1000);
         asm volatile (
           "1: sbiw %0,1" "\n\t"
           "brne 1b" : "=w" (us) : "0" (us)
