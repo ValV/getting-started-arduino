@@ -136,7 +136,7 @@ const char command[CMDC][CMDX] = {
   {'m', '4', 0, 0}      // Mode 4 (m4)
 };
 
-unsigned int us = 4000; // Delay 4k asm loops (1ms)
+unsigned int us; // Variable for asm delay loops (1ms)
 
 // This is not OOP - so global variables are ok
 volatile uint8_t lrun = 0; // Lights' run-stop variable
@@ -285,6 +285,7 @@ void loop() {
     if (str_in[i]) i ++;
     // Pause application for at least 1ms
     // for the Serial to be ready
+    us = 4000;
     asm volatile (
       "1: sbiw %0,1" "\n\t"
       "brne 1b" : "=w" (us) : "0" (us)
@@ -331,6 +332,7 @@ void loop() {
       // Clear the rest of Serial buffer and input string
       while (Serial.available()) {
         Serial.read();
+        us = 4000;
         asm volatile (
           "1: sbiw %0,1" "\n\t"
           "brne 1b" : "=w" (us) : "0" (us)
